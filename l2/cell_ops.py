@@ -40,11 +40,10 @@ def from_list(elems):
         head = Cell(elem,head)
     return head
     
-def eval_all(machine,head):
-    return [machine.evaluate(elem) for elem in to_iter(head)]
-
 def list_str(head):
     if not isinstance(head,Cell):
         return str(head)
+    if head.override is not None:
+        return head.override
     lists = [list_str(elem) if isinstance(elem,Cell) else str(elem) for elem in to_list(head)]
     return '('+(' '.join(lists))+')'

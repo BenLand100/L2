@@ -7,7 +7,7 @@ from . import cell_ops
 class L2Machine:
     '''Virtual machine that implements the L2 language.'''
     
-    def __init__(self):
+    def __init__(self,**kwargs):
         self.static_scope = scope.new()
         scope.bind(self.static_scope,Symbol('NIL'),None)
         scope.bind(self.static_scope,Symbol('T'),Symbol('T'))
@@ -49,36 +49,34 @@ class L2Machine:
             (defun last (list) (let ((next (getr list))) (if next (last next) list)) )
         ''')
         for expr in cell_ops.to_iter(lang):
-            self.evaluate(expr)
+            self.evaluate(expr,**kwargs)
         
-    def spec_print(self,head):
-        args = cell_ops.eval_all(self,head)
-        print(*args)
+    def spec_print(self,head,**kwargs):
+        print(*self.eval_to_list(head,**kwargs))
         return None
     
-    def spec_lambda(self,head):
-        closure = Cell(Symbol("LAMBDA"),Cell(self.scope,head),override='lambda')
+    def spec_lambda(self,head,**kwargs):
+        closure = Cell(Symbol("LAMBDA"),Cell(self.scope,head),override='<lambda>')
         return closure
     
-    def spec_macro(self,head):
+    def spec_macro(self,head,**kwargs):
         symbol = head.left
-        closure = Cell(Symbol("MACRO"),Cell(self.scope,head.right),override='macro')
+        closure = Cell(Symbol("MACRO"),Cell(self.scope,head.right),override='<macro>')
         scope.bind(self.scope,symbol,closure)
         return closure
     
-    def spec_bind(self,head):
+    def spec_bind(self,head,**kwargs):
         sym,val = cell_ops.to_list(head)
-        val = self.evaluate(val)
-        print('Bind',val,'to',sym)
+        val = self.evaluate(val,**kwargs)
         scope.bind(self.scope,sym,val)
         return val
     
-    def spec_ref(self,head):
+    def spec_ref(self,head,**kwargs):
         sym, = cell_ops.to_list(head)
         return scope.reference(self.scope,sym)
     
-    def spec_type(self,head):
-        val, = cell_ops.eval_all(self,head)
+    def spec_type(self,head,**kwargs):
+        val, = self.eval_to_list(head,**kwargs)
         if isinstance(val,Cell):
             return Symbol('CELL')
         elif isinstance(val,Symbol):
@@ -94,33 +92,33 @@ class L2Machine:
         else:
             raise Exception('Unknown type, somehow.')
     
-    def spec_quote(self,head):
+    def spec_quote(self,head,**kwargs):
         return head.left
     
-    def spec_setl(self,head):
-        cell,val = cell_ops.eval_all(self,head)
+    def spec_setl(self,head,**kwargs):
+        cell,val = self.eval_to_list(head,**kwargs)
         cell.left = val
         return val
     
-    def spec_setr(self,head):
-        cell,val = cell_ops.eval_all(self,head)
+    def spec_setr(self,head,**kwargs):
+        cell,val = self.eval_to_list(head,**kwargs)
         cell.right = val
         return val
     
-    def spec_getl(self,head):
-        cell, = cell_ops.eval_all(self,head)
+    def spec_getl(self,head,**kwargs):
+        cell, = self.eval_to_list(head,**kwargs)
         return cell.left
     
-    def spec_getr(self,head):
-        cell, = cell_ops.eval_all(self,head)
+    def spec_getr(self,head,**kwargs):
+        cell, = self.eval_to_list(head,**kwargs)
         return cell.right
     
-    def spec_cell(self,head):
-        left,right = cell_ops.eval_all(self,head)
+    def spec_cell(self,head,**kwargs):
+        left,right = self.eval_to_list(head,**kwargs)
         return Cell(left,right)
     
-    def spec_append(self,head):
-        lists = cell_ops.eval_all(self,head)
+    def spec_append(self,head,**kwargs):
+        lists = self.eval_to_list(head,**kwargs)
         last = lists[-1]
         rest = lists[:-1]
         elems = []
@@ -130,11 +128,11 @@ class L2Machine:
         cell_ops.tail(result).right = last
         return result
     
-    def spec_cond(self,head):
+    def spec_cond(self,head,**kwargs):
         for cond in cell_ops.to_iter(head):
             test,body = cell_ops.to_list(cond)
-            if self.evaluate(test) is not None:
-                return self.evaluate(body)
+            if self.evaluate(test,**kwargs) is not None:
+                return self.evaluate(body,**kwargs)
         return None
         
     def bind_args(self,syms_list,args_list):
@@ -157,16 +155,24 @@ class L2Machine:
                 scope.bind(self.scope,syms_list[iarg],args_list[iarg])
             isym = isym+1
             iarg = iarg+1
+    
+    def eval_to_iter(self,head,**kwargs):
+        yield from (self.evaluate(elem,**kwargs) for elem in cell_ops.to_iter(head))
         
-    def evaluate(self,expr):
-        print('Eval:',cell_ops.list_str(expr))
+    def eval_to_list(self,head,**kwargs):
+        return list(self.eval_to_iter(head,**kwargs))
+        
+    def evaluate(self,expr,verbose=False):
+        kwargs = dict(verbose=verbose)
+        if verbose:
+            print('Eval:',cell_ops.list_str(expr))
         if isinstance(expr,Cell): # CELLs are executed (head is OP)
-            op = self.evaluate(expr.left)
+            op = self.evaluate(expr.left,**kwargs)
             if callable(op): # primitives are callable and handle evaluation
-                return op(expr.right)
+                return op(expr.right,**kwargs)
             elif isinstance(op,Cell):
                 if op.left == Symbol("LAMBDA"): # evaluates all arguments, result returned
-                    args = cell_ops.eval_all(self,expr.right)
+                    args = self.eval_to_list(expr.right,**kwargs)
                     syms = cell_ops.to_list(op.right.right.left)
                     body = op.right.right.right 
                     last_scope = self.scope #save current scope to restore later
@@ -174,7 +180,7 @@ class L2Machine:
                     self.bind_args(syms,args)
                     result = None
                     for form in cell_ops.to_iter(body):
-                        result = self.evaluate(form)
+                        result = self.evaluate(form,**kwargs)
                     self.scope = last_scope
                     return result
                 elif op.left == Symbol("MACRO"): # evaluates no arguments, result evaluated
@@ -186,14 +192,15 @@ class L2Machine:
                     self.bind_args(syms,args)
                     result = None
                     for form in cell_ops.to_iter(body):
-                        result = self.evaluate(form)
+                        result = self.evaluate(form,**kwargs)
                     self.scope = last_scope
-                    print('Macro expanded:',cell_ops.list_str(result))
-                    print('From expression:',cell_ops.list_str(expr))
+                    if verbose:
+                        print('Macro expanded:',cell_ops.list_str(result))
+                        print('From expression:',cell_ops.list_str(expr))
                     #Store expanded macro
                     expr.left = result.left
                     expr.right = result.right
-                    return self.evaluate(result)
+                    return self.evaluate(result,**kwargs)
                 else:
                     raise Exception('CELL is not LAMBDA or MACRO')
             else:
