@@ -46,6 +46,10 @@ class L2Machine:
             (macro if (test-case true-form &optional false-form) (cond 
                     (false-form `(cond ,`(,test-case ,true-form) ,`(t ,false-form)) )
                     (t `(cond ,`(,test-case ,true-form)) )))
+            (macro and (a b) `(if ,a ,`(if ,b t)))
+            (macro or (a b) `(if ,a t ,`(if ,b t)))
+            (macro xor (a b) `(if ,a ,`(if ,b nil t) ,`(if ,b t nil)))
+            (macro not (a) `(if ,a nil t))
             (macro let (variables &rest forms) `(  
                 ,`(lambda ,(map (lambda (variable) (getl variable)) variables) ,@forms)
                 ,@(map (lambda (variable) (if (getr variable) (getl (getr variable)))) variables) ) )
