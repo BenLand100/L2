@@ -9,7 +9,7 @@ def is_list(head):
 
 def to_iter(head):
     while head is not None:
-        if isinstance(head,Cell):
+        if isinstance(head,Cell) and (head.right is None or isinstance(head.right,Cell)):
             yield head.left
             head = head.right
         else:
@@ -45,5 +45,7 @@ def list_str(head):
         return str(head)
     if head.override is not None:
         return head.override
+    if not is_list(head):
+        return str(head) # a cons structure, not a list
     lists = [list_str(elem) if isinstance(elem,Cell) else str(elem) for elem in to_list(head)]
     return '('+(' '.join(lists))+')'

@@ -14,6 +14,7 @@ class L2Machine:
         self.scope = self.static_scope
         self.special = {
             'PRINT':self.spec_print,
+            'EVAL':self.spec_eval,
             'LAMBDA':self.spec_lambda,
             'MACRO':self.spec_macro,
             'BIND':self.spec_bind,
@@ -26,7 +27,15 @@ class L2Machine:
             'GETR':self.spec_getr,
             'CELL':self.spec_cell,
             'APPEND':self.spec_append, #tricky to define this in L2 w/o let (needed for let syntax)
-            'COND':self.spec_cond
+            'COND':self.spec_cond,
+            '>=':self.spec_ge,
+            '>':self.spec_gt,
+            '<=':self.spec_le,
+            '<':self.spec_lt,
+            'OP+':self.spec_plus,
+            'OP-':self.spec_minus,
+            'OP*':self.spec_mul,
+            'OP/':self.spec_div,
         }
         lang = parser.parse('''
             ; required basic functionality
@@ -34,7 +43,6 @@ class L2Machine:
             (macro set (symbol value) `(setr ,`(ref ,symbol) ,value) )
             (macro defun (symbol args &rest body) 
                 (list 'bind symbol (cell 'lambda (cell args body)) ) )
-            (macro call (func &rest args) (cell func args))
             (macro if (test-case true-form &optional false-form) (cond 
                     (false-form `(cond ,`(,test-case ,true-form) ,`(t ,false-form)) )
                     (t `(cond ,`(,test-case ,true-form)) )))
@@ -42,11 +50,25 @@ class L2Machine:
                 ,`(lambda ,(map (lambda (variable) (getl variable)) variables) ,@forms)
                 ,@(map (lambda (variable) (if (getr variable) (getl (getr variable)))) variables) ) )
             (defun map (func args-list) (if args-list 
-                (cell (func (getl args-list)) (map func (getr args-list))) ) ) 
-                
+                (cell (func (getl args-list)) (map func (getr args-list))) ) )
+            (defun length (list) (if (getr list) (op+ 1 (length (getr list))) 1))
+            (defun last (list &optional n) (let ((m (if n n 1))) (if (>= m (length list)) list (last (getr list) m)) ) )
+            (defun progn (&rest forms) (getl (last forms)))
+            (defun list* (&rest args)  (if (< (length args) 2) 
+                (getl args) 
+                (progn (setr (last args 2) (getl (last args))) args) ) ) ;just like lisp list*
+            (defun list** (args)  )
+            (defun call (func args) (eval `(,`(quote ,func) ,@args)))
+            (macro apply (func &rest args) `(call ,func ,`(list* ,@args)) ) ;just like lisp apply
+            
+            ;math from primative operations
+            (defun + (first &rest rest) (if rest (apply + (op+ first (getl rest)) (getr rest)) first))
+            (defun - (first &rest rest) (if rest (apply - (op- first (getl rest)) (getr rest)) first))
+            (defun * (first &rest rest) (if rest (apply * (op* first (getl rest)) (getr rest)) first))
+            (defun / (first &rest rest) (if rest (apply / (op/ first (getl rest)) (getr rest)) first))
+            
             ; utilities
             (defun copy-list (list) (map (lambda (x) x) list))
-            (defun last (list) (let ((next (getr list))) (if next (last next) list)) )
         ''')
         for expr in cell_ops.to_iter(lang):
             self.evaluate(expr,**kwargs)
@@ -54,14 +76,19 @@ class L2Machine:
     def spec_print(self,head,**kwargs):
         print(*self.eval_to_list(head,**kwargs))
         return None
+        
+    def spec_eval(self,head,**kwargs):
+        form, = self.eval_to_list(head,**kwargs)
+        #print('Form:',form)
+        return self.evaluate(form,**kwargs)
     
     def spec_lambda(self,head,**kwargs):
-        closure = Cell(Symbol("LAMBDA"),Cell(self.scope,head),override='<lambda>')
+        closure = Cell(Symbol("LAMBDA"),Cell(self.scope,head),override='<lambda'+cell_ops.list_str(head.left)+'>')
         return closure
     
     def spec_macro(self,head,**kwargs):
         symbol = head.left
-        closure = Cell(Symbol("MACRO"),Cell(self.scope,head.right),override='<macro>')
+        closure = Cell(Symbol("MACRO"),Cell(self.scope,head.right),override='<macro'+cell_ops.list_str(head.left)+'>')
         scope.bind(self.scope,symbol,closure)
         return closure
     
@@ -135,26 +162,64 @@ class L2Machine:
                 return self.evaluate(body,**kwargs)
         return None
         
+    def spec_plus(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return a+b
+        
+    def spec_minus(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return a-b
+        
+    def spec_mul(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return a*b
+        
+    def spec_div(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return a/b
+        
+    def spec_ge(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return Symbol('T') if a >= b else None
+        
+    def spec_gt(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return Symbol('T') if a > b else None
+        
+    def spec_le(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return Symbol('T') if a <= b else None
+        
+    def spec_lt(self,head,**kwargs):
+        a,b = self.eval_to_list(head,**kwargs)
+        return Symbol('T') if a < b else None
+        
     def bind_args(self,syms_list,args_list):
+        #print('Syms',list(map(str,syms_list)))
+        #print('Args',list(map(str,args_list)))
         isym = 0
         iarg = 0
         while isym < len(syms_list):
-            if syms_list[isym] == Symbol('&REST'):
+            if isinstance(syms_list[isym],Symbol) and syms_list[isym] == Symbol('&REST'):
                 isym = isym+1
                 scope.bind(self.scope,syms_list[isym],cell_ops.from_list(args_list[iarg:]))
+                iarg = len(args_list)
                 break
-            elif syms_list[isym] == Symbol('&OPTIONAL'):
+            elif isinstance(syms_list[isym],Symbol) and syms_list[isym] == Symbol('&OPTIONAL'):
                 isym = isym+1
                 if iarg >= len(args_list):
                     scope.bind(self.scope,syms_list[isym],None)
                 else:
                     scope.bind(self.scope,syms_list[isym],args_list[iarg])
+                    iarg = iarg+1
             else:
                 if iarg >= len(args_list):
                     raise Exception('Not enough arguments to fill symbols')
                 scope.bind(self.scope,syms_list[iarg],args_list[iarg])
+                iarg = iarg+1
             isym = isym+1
-            iarg = iarg+1
+        if iarg != len(args_list):
+            raise Exception('Too many arguments to fill symbols')
     
     def eval_to_iter(self,head,**kwargs):
         yield from (self.evaluate(elem,**kwargs) for elem in cell_ops.to_iter(head))
